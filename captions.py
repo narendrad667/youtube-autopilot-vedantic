@@ -169,12 +169,19 @@ def render_caption_track(chapters, timings, work_dir, total, fps=10):
     if t < total - 0.05:
         entries.append((blank, total - t))
     list_path = os.path.join(track_dir, "concat.txt")
+    # NOTE (2026-11-18): paths in the concat list MUST be absolute.
+    # FFmpeg's concat demuxer resolves relative entries against the
+    # concat file's own directory, so a relative work_dir ("work_0")
+    # doubled the path: work_0/capframes/work_0/capframes/cue_000.png.
+    # That is why the track failed on the runner (runs #2-#4) while the
+    # same command worked on this VM (absolute work_dir in tests).
     with open(list_path, "w") as f:
         for path, dur in entries:
-            f.write("file '%s'\nduration %.3f\n" % (path, dur))
+            f.write("file '%s'\nduration %.3f\n"
+                    % (os.path.abspath(path), dur))
         # Concat quirk: the last file must be repeated (its duration is
         # otherwise ignored).
-        f.write("file '%s'\n" % entries[-1][0])
+        f.write("file '%s'\n" % os.path.abspath(entries[-1][0]))
     out = os.path.join(work_dir, "caption_track.mov")
     # NOTE (2026-11-18): on the GitHub runner BOTH codecs failed with
     # `-vf format=yuva420p` while the same command works on this VM
@@ -190,7 +197,8 @@ def render_caption_track(chapters, timings, work_dir, total, fps=10):
     ]
     for codec, vf in attempts:
         cmd = ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-               "-i", list_path] + vf + ["-r", str(fps), "-c:v", codec, out]
+               "-i", os.path.abspath(list_path)] + vf + ["-r", str(fps),
+               "-c:v", codec, out]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode == 0 and os.path.exists(out) \
                 and os.path.getsize(out) > 1000:

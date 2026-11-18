@@ -63,7 +63,7 @@ GTTS_LANG = os.environ.get("TTS_LANG") or "hi"
 FORCE_ENGINE = os.environ.get("TTS_ENGINE", "")
 # Long chapters are split on sentence boundaries into chunks of at most
 # this many characters (one Gemini API call per chunk).
-TTS_CHUNK_CHARS = 600
+TTS_CHUNK_CHARS = 900
 
 
 def probe_duration(path):
@@ -130,6 +130,29 @@ def _gemini_tts_call(api_key, model, voice, text):
     raise RuntimeError("No audio in response from %s" % model)
 
 
+def _gemini_tts_call_with_retry(api_key, model, voice, text):
+    """One chunk via one model, with backoff on 429. The free tier
+    rate-limits per minute (run #4 hit 429 after 2 chapters because
+    chunks fired back-to-back and the single 15s retry was not enough).
+    Retries the SAME model up to 3 more times (15s, 60s, 120s) before
+    giving up on it. Returns PCM bytes, or raises the last error."""
+    waits = (15, 60, 120)
+    last_err = None
+    for attempt in range(len(waits) + 1):
+        try:
+            return _gemini_tts_call(api_key, model, voice, text)
+        except Exception as e:
+            last_err = e
+            if "429" not in str(e) or attempt == len(waits):
+                raise
+            wait = waits[attempt]
+            print("Gemini TTS rate-limited (%s), waiting %ds "
+                  "(attempt %d/%d)..." % (model, wait, attempt + 1,
+                                           len(waits)))
+            time.sleep(wait)
+    raise last_err
+
+
 def gemini_tts_scene(text, voice, out_path):
     """Narrate with Gemini TTS (Charon). Long text is split into
     sentence chunks; the PCM is concatenated and converted to mp3 with
@@ -141,23 +164,27 @@ def gemini_tts_scene(text, voice, out_path):
     models = [GEMINI_MODEL] + [m for m in GEMINI_MODEL_FALLBACKS
                                if m != GEMINI_MODEL]
     pcm_all = b""
-    for chunk in _split_text(text):
+    chunks = _split_text(text)
+    for ci, chunk in enumerate(chunks):
+        if ci > 0:
+            # Pace requests: firing chunks back-to-back trips the
+            # free-tier per-minute limit (run #4).
+            time.sleep(3)
         pcm = None
         last_err = ""
-        for model in models:
+        for mi, model in enumerate(models):
             try:
-                pcm = _gemini_tts_call(api_key, model, voice, chunk)
+                pcm = _gemini_tts_call_with_retry(api_key, model, voice,
+                                                  chunk)
                 break
             except Exception as e:
                 last_err = str(e)
-                if "429" in last_err:
-                    print("Gemini TTS rate-limited, waiting 15s...")
-                    time.sleep(15)
-                    try:
-                        pcm = _gemini_tts_call(api_key, model, voice, chunk)
-                        break
-                    except Exception as e2:
-                        last_err = str(e2)
+                if "429" in last_err and mi < len(models) - 1:
+                    # The quota is per project, so the next model is
+                    # limited too — wait a minute before trying it.
+                    print("Gemini TTS still rate-limited, waiting 60s "
+                          "before the next model...")
+                    time.sleep(60)
         if pcm is None:
             print("Gemini TTS failed for a chunk: %s" % last_err)
             return False
