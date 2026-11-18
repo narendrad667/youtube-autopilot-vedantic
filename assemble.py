@@ -148,8 +148,8 @@ def _wrap_title(title, max_chars=28):
 def _render_title_png(title, out_path, font_size=58):
     """Render a chapter title as a transparent 1280x720 PNG with Pillow
     + libraqm (correct Devanagari shaping). Yellow bold text with a black
-    outline on a semi-transparent dark box, centred at 60% height.
-    Returns True on success."""
+    outline on a semi-transparent dark box, box bottom at 60% height
+    (above the captions). Returns True on success."""
     try:
         from PIL import Image, ImageDraw, ImageFont
         img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -162,10 +162,16 @@ def _render_title_png(title, out_path, font_size=58):
         heights = [draw.textbbox((0, 0), l, font=font)[3] for l in lines]
         widths = [draw.textlength(l, font=font) for l in lines]
         total_h = sum(heights) + 12 * (len(lines) - 1)
-        top = int(H * 0.60)
+        # Box BOTTOM fixed at 60% height (was: box top at 60%). A 2-line
+        # title used to push its 2nd line down into the caption zone
+        # (captions sit at the bottom, MarginV 36) — e.g. "असर"/"बदला"/
+        # "जादू" overlapping the white caption text in run #3. Bottom
+        # anchoring keeps every line above the captions.
         box_pad = 18
         box_w = int(max(widths)) + 2 * box_pad
         box_h = total_h + 2 * box_pad
+        box_bottom = int(H * 0.60)
+        top = box_bottom - box_h
         box_x = (W - box_w) // 2
         draw.rectangle([box_x, top, box_x + box_w, top + box_h],
                        fill=(0, 0, 0, 140))

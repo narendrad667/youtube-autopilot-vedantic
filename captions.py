@@ -176,18 +176,30 @@ def render_caption_track(chapters, timings, work_dir, total, fps=10):
         # otherwise ignored).
         f.write("file '%s'\n" % entries[-1][0])
     out = os.path.join(work_dir, "caption_track.mov")
-    for codec in ("qtrle", "png"):
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-             "-i", list_path, "-vf", "format=yuva420p",
-             "-r", str(fps), "-c:v", codec, out],
-            capture_output=True, text=True)
+    # NOTE (2026-11-18): on the GitHub runner BOTH codecs failed with
+    # `-vf format=yuva420p` while the same command works on this VM
+    # (FFmpeg 8.1.2) — the runner's older FFmpeg (Ubuntu apt) apparently
+    # rejects yuva420p for these encoders. So try with the filter first,
+    # then WITHOUT it (encoder negotiates its own pix_fmt), and always
+    # print ffmpeg's stderr so the real error shows in the log.
+    attempts = [
+        ("qtrle", ["-vf", "format=yuva420p"]),
+        ("png", ["-vf", "format=yuva420p"]),
+        ("qtrle", []),
+        ("png", []),
+    ]
+    for codec, vf in attempts:
+        cmd = ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+               "-i", list_path] + vf + ["-r", str(fps), "-c:v", codec, out]
+        r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode == 0 and os.path.exists(out) \
                 and os.path.getsize(out) > 1000:
             print("Caption track: %s (%d cues, %s)"
                   % (out, len(cues), codec))
             return out
-        print("Caption track %s failed, trying next codec" % codec)
+        print("Caption track %s%s failed: %s"
+              % (codec, " (no pix_fmt filter)" if not vf else "",
+                 (r.stderr or "").strip()[:500]))
     return None
 
 
