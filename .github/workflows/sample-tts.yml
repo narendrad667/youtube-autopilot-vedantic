@@ -1,0 +1,48 @@
+name: Sample Gemini TTS voices
+
+# One-off voice sampler: generates short Hindi samples with Gemini's
+# native text-to-speech (Flash TTS models — free of charge on the free
+# tier, same GEMINI_API_KEY as the main workflow) so the user can pick a
+# voice that sounds natural instead of robotic. Manual dispatch only;
+# no schedule, no upload, no YouTube.
+
+on:
+  workflow_dispatch:
+    inputs:
+      voices:
+        description: "Comma-separated prebuilt voice names (e.g. Kore,Charon,Aoede)"
+        required: false
+        default: "Kore,Charon,Aoede"
+      model:
+        description: "Gemini TTS model (falls back automatically if retired)"
+        required: false
+        default: "gemini-3.8-flash-tts"
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: FFmpeg check
+        run: which ffmpeg || sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Generate voice samples
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python sample_tts.py --model "${{ github.event.inputs.model }}" --voices "${{ github.event.inputs.voices }}" --out out_tts
+
+      - name: Keep samples as artifact (7 days)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tts-samples
+          path: out_tts/*.mp3
+          retention-days: 7
