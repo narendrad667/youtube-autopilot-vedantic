@@ -1,7 +1,8 @@
 name: Daily YouTube Videos — Vedantic Psychology
 
 # Hindi book summaries (BookPeak style): 10+ min faceless videos,
-# 2 AI images per video, Kokoro Hindi voice. Fully free, zero Muse tokens.
+# 2 AI images per video, Gemini TTS voice "Charon" (user-approved).
+# Fully free, zero Muse tokens.
 # Runs on GitHub's free servers. Repo must stay PUBLIC (code only, no
 # secrets) so Actions minutes are unlimited.
 #
@@ -16,9 +17,9 @@ env:
   VIDEOS_PER_DAY: "3"
 
 on:
-  # Schedule DISABLED for now — the Edge voice test comes first, and
-  # there is no YT2_* token yet. Re-enable (uncomment) only after the
-  # user approves the voice and the Vedantic token is stored.
+  # Schedule DISABLED for now — the voice is approved (Gemini "Charon")
+  # but there is no YT2_* token yet. Re-enable (uncomment) only after
+  # the Vedantic token is stored and the user confirms videos/day.
   # schedule:
   #   - cron: "0 1 * * *"
   workflow_dispatch:
@@ -28,7 +29,7 @@ on:
         required: false
         default: "0"
       tts_engine:
-        description: "Force a TTS path: edge (Edge Hindi test), kokoro, gtts, or empty for default chain"
+        description: "Force a TTS path: gemini (approved Charon voice), edge, gtts, or empty for default chain"
         required: false
         default: ""
       test_chapters:
@@ -61,15 +62,11 @@ jobs:
       - name: FFmpeg check
         run: which ffmpeg || sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
-      - name: Install espeak-ng (Kokoro voice needs it)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng
-
       - name: Install Devanagari font (Hindi captions + thumbnails)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-core
 
       - name: Install dependencies
         run: |
-          pip install --timeout 300 --retries 5 torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
       - name: Build and upload video ${{ matrix.index }}
@@ -81,7 +78,7 @@ jobs:
           YT2_CLIENT_ID: ${{ secrets.YT2_CLIENT_ID }}
           YT2_CLIENT_SECRET: ${{ secrets.YT2_CLIENT_SECRET }}
           YT2_REFRESH_TOKEN: ${{ secrets.YT2_REFRESH_TOKEN }}
-          KOKORO_HINDI_VOICE: ${{ secrets.KOKORO_HINDI_VOICE }}
+          GEMINI_TTS_VOICE: ${{ secrets.GEMINI_TTS_VOICE }}
           TTS_ENGINE: ${{ github.event.inputs.tts_engine }}
           TEST_CHAPTERS: ${{ github.event.inputs.test_chapters }}
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
