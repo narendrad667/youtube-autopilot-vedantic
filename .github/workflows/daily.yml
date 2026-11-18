@@ -1,0 +1,112 @@
+name: Daily YouTube Videos — Vedantic Psychology
+
+# Hindi book summaries (BookPeak style): 10+ min faceless videos,
+# 2 AI images per video, Kokoro Hindi voice. Fully free, zero Muse tokens.
+# Runs on GitHub's free servers. Repo must stay PUBLIC (code only, no
+# secrets) so Actions minutes are unlimited.
+#
+# VIDEOS_PER_DAY is the daily count (default 3). Change it in the env
+# block below — no code change needed. NOTE the YouTube Data API quota is
+# per Google Cloud PROJECT, not per channel: if this channel shares the
+# live What If pipeline's project, both channels together may only upload
+# 6 videos/day total (9900/10000 units). 6+6/day needs a second project
+# with its own OAuth client + YT2_* secrets.
+
+env:
+  VIDEOS_PER_DAY: "3"
+
+on:
+  # Schedule DISABLED for now — the Edge voice test comes first, and
+  # there is no YT2_* token yet. Re-enable (uncomment) only after the
+  # user approves the voice and the Vedantic token is stored.
+  # schedule:
+  #   - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      index:
+        description: "Video index 0-2 (manual single-video test)"
+        required: false
+        default: "0"
+      tts_engine:
+        description: "Force a TTS path: edge (Edge Hindi test), kokoro, gtts, or empty for default chain"
+        required: false
+        default: ""
+      test_chapters:
+        description: "Short-test mode: build only the first N chapters (e.g. 1 for a ~2 min voice test), empty for full video"
+        required: false
+        default: ""
+      dry_run:
+        description: "Build the video but skip the YouTube upload (true/false)"
+        required: false
+        default: "false"
+        type: boolean
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [0, 1, 2, 3, 4, 5]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: FFmpeg check
+        run: which ffmpeg || sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Install espeak-ng (Kokoro voice needs it)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng
+
+      - name: Install Devanagari font (Hindi captions + thumbnails)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-core
+
+      - name: Install dependencies
+        run: |
+          pip install --timeout 300 --retries 5 torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Build and upload video ${{ matrix.index }}
+        # Manual dispatch runs only the selected index; schedule runs
+        # indexes 0..VIDEOS_PER_DAY-1.
+        if: ${{ (github.event_name != 'workflow_dispatch' || matrix.index == fromJSON(github.event.inputs.index)) && matrix.index < fromJSON(env.VIDEOS_PER_DAY) }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT2_CLIENT_ID: ${{ secrets.YT2_CLIENT_ID }}
+          YT2_CLIENT_SECRET: ${{ secrets.YT2_CLIENT_SECRET }}
+          YT2_REFRESH_TOKEN: ${{ secrets.YT2_REFRESH_TOKEN }}
+          KOKORO_HINDI_VOICE: ${{ secrets.KOKORO_HINDI_VOICE }}
+          TTS_ENGINE: ${{ github.event.inputs.tts_engine }}
+          TEST_CHAPTERS: ${{ github.event.inputs.test_chapters }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+          VIDEOS_PER_DAY: ${{ env.VIDEOS_PER_DAY }}
+        run: python run_one.py "${{ matrix.index }}"
+
+      # Small files only on daily runs: the video itself (~10+ min) would
+      # blow past GitHub's 500 MB free artifact storage. The video lives
+      # on YouTube anyway; the mp4 artifact is kept only for manual test
+      # runs (debugging).
+      - name: Keep result as artifact (7 days)
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || matrix.index == fromJSON(github.event.inputs.index)) && matrix.index < fromJSON(env.VIDEOS_PER_DAY) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ matrix.index }}
+          path: |
+            work_${{ matrix.index }}/thumbnail.jpg
+            work_${{ matrix.index }}/captions.srt
+            work_${{ matrix.index }}/result.json
+          retention-days: 7
+
+      - name: Keep the built video too (manual test runs only)
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && matrix.index == fromJSON(github.event.inputs.index) && matrix.index < fromJSON(env.VIDEOS_PER_DAY) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ matrix.index }}-mp4
+          path: work_${{ matrix.index }}/video.mp4
+          retention-days: 7
