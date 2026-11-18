@@ -38,8 +38,12 @@ import urllib.request
 import wave
 
 # Configurable voice — the user approved Charon on 2026-11-18.
-GEMINI_VOICE = os.environ.get("GEMINI_TTS_VOICE", "Charon")
-GEMINI_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+# NOTE: use `or` (not .get's default) because GitHub passes an UNSET
+# secret as an EMPTY STRING env var — .get("X", "Charon") returns ""
+# when X is set-but-empty, and "" is not a valid voice name. (That bug
+# made run #2 fall back to Edge: "Received empty voice name".)
+GEMINI_VOICE = os.environ.get("GEMINI_TTS_VOICE") or "Charon"
+GEMINI_MODEL = os.environ.get("GEMINI_TTS_MODEL") or "gemini-3.8-flash-tts"
 GEMINI_MODEL_FALLBACKS = [
     "gemini-3.8-flash-tts",
     "gemini-3.1-flash-tts-preview",
@@ -48,13 +52,12 @@ GEMINI_MODEL_FALLBACKS = [
 # Style instruction, sent with every request so the voice is clear and
 # sounds the same in every video. Gemini TTS treats a leading style
 # direction as instruction, not as text to read aloud.
-GEMINI_STYLE = os.environ.get(
-    "GEMINI_TTS_STYLE",
+GEMINI_STYLE = os.environ.get("GEMINI_TTS_STYLE") or (
     "Say clearly, calmly and steadily, like a professional narrator:")
 # Edge fallback voice (also rejected as robotic by the user — fallback
 # only, never primary).
-EDGE_VOICE = os.environ.get("TTS_VOICE", "hi-IN-MadhurNeural")
-GTTS_LANG = os.environ.get("TTS_LANG", "hi")
+EDGE_VOICE = os.environ.get("TTS_VOICE") or "hi-IN-MadhurNeural"
+GTTS_LANG = os.environ.get("TTS_LANG") or "hi"
 # TTS_ENGINE forces one path: "gemini"/"gemini-tts" -> [gemini, edge,
 # gtts], "edge"/"edge-tts" -> [edge-tts, gtts], "gtts" -> [gtts].
 FORCE_ENGINE = os.environ.get("TTS_ENGINE", "")
