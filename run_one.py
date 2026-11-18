@@ -6,8 +6,9 @@ Usage: python run_one.py <job_index 0..N-1> [work_dir]
     cycles, it starts again from the top).
   - Gemini writes a Hindi book-summary script (super hook + 6 chapters,
     1500+ words, ~10-12 min).
-  - Kokoro Hindi (fallback Edge hi-IN-MadhurNeural, then gTTS hi)
-    narrates chapter by chapter.
+  - Gemini native TTS voice "Charon" (user-approved 2026-11-18; clear,
+    calm, steady style on every request), fallback Edge
+    hi-IN-MadhurNeural, then gTTS hi — narrates chapter by chapter.
   - Exactly 2 AI images per video (Pollinations, Openverse fallback):
     one book visual for the whole video, one thumbnail visual.
   - FFmpeg assembles the 10+ min video: static book visual + chapter
@@ -18,11 +19,13 @@ Usage: python run_one.py <job_index 0..N-1> [work_dir]
     hashtags, always #VedanticPsychology).
 
 Env required: GEMINI_API_KEY, YT2_CLIENT_ID, YT2_CLIENT_SECRET,
-YT2_REFRESH_TOKEN. Optional: KOKORO_HINDI_VOICE, TTS_VOICE, DRY_RUN=1
-(build the video but skip the upload), VIDEOS_PER_DAY (default 3),
-TTS_ENGINE (force one TTS path: "edge" for the Edge Hindi test video),
-TEST_CHAPTERS=N (short-test mode: build only the first N chapters, so a
-quick test video can be rendered without a full 10-minute build).
+YT2_REFRESH_TOKEN. Optional: GEMINI_TTS_VOICE (default Charon),
+GEMINI_TTS_MODEL, GEMINI_TTS_STYLE, TTS_VOICE (Edge fallback voice),
+DRY_RUN=1 (build the video but skip the upload), VIDEOS_PER_DAY
+(default 3), TTS_ENGINE (force one TTS path: "gemini" for the approved
+Charon voice, "edge", or "gtts"), TEST_CHAPTERS=N (short-test mode:
+build only the first N chapters, so a quick test video can be rendered
+without a full 10-minute build).
 """
 import datetime
 import json

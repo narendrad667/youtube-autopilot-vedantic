@@ -11,12 +11,12 @@ Output contract (JSON):
   "description": "2-3 sentences in Hindi + a question for comments",
   "tags": ["...", ... 8-12 tags, Hindi + English mix],
   "thumbnail_text": "short Hindi headline, 3-6 words",
-  "total_words": 1650,
+  "total_words": 1800,
   "book_visual_prompt": "cinematic AI image prompt for the book visual",
   "thumbnail_prompt": "dramatic AI image prompt for the thumbnail base",
   "chapters": [
     {"title": "chapter title in Hindi",
-     "narration": "...",            # 200-300 words, ~1.5-2 minutes spoken
+     "narration": "...",            # 280-320 words, ~2 minutes spoken
      "takeaway": "one-line lesson in Hindi",
      "sfx": "soft bell"}            # short SFX cue for this chapter
   ]
@@ -25,11 +25,15 @@ Output contract (JSON):
 Structure (BookPeak style):
 - Chapter 1 = SUPER HOOK: a shocking question or a relatable life problem
   in the first 10 seconds that makes the viewer unable to click away.
-- 5-7 chapters, each 200-300 words, each ending with one clear takeaway.
+- 6 chapters, each 280-320 words, each ending with one clear takeaway.
 - Simple Hindi (Devanagari), real-life Indian examples, no difficult words.
 - The script is an ORIGINAL summary in the narrator's own words — NEVER
   a verbatim reading of the book, never long quotes from it.
-- Target 1500-1800 Hindi words = 10+ minutes spoken.
+- Target 1800 Hindi words = 10+ minutes spoken (measured 2026-11-18:
+  Gemini Charon ~171 wpm, so 1800 words ≈ 10.5 min; Edge ~145 wpm).
+  Chapter 1 of the first test script actually came out at 378 words,
+  so Gemini tends to overshoot the per-chapter ask — good for the
+  10-minute minimum.
 """
 import json
 import time
@@ -45,7 +49,7 @@ PROMPT_TEMPLATE = """Write a YouTube video script in simple Hindi (Devanagari sc
 BOOK: {book_title} by {book_author} (Hindi title: {book_title_hi})
 BOOK HOOK: {book_hook}
 
-LENGTH: at least 1500 words of narration total (about 10-12 minutes spoken). Every chapter below must be 200-300 words — never write a shorter chapter, or the video will be too short.
+LENGTH: at least 1800 words of narration total (about 10-12 minutes spoken). Every chapter below must be 280-320 words — never write a shorter chapter, or the video will be too short.
 
 IMPORTANT — ORIGINAL SUMMARY, NOT A READING: Write the summary in your own simple words, as if you are explaining the book to a friend. Do NOT copy sentences from the book, do NOT quote long passages, and do NOT invent fake quotes, fake studies or fake statistics. If you are unsure of a detail, say it approximately ("lagbhag", "aam taur par").
 
@@ -57,7 +61,7 @@ RETENTION STRUCTURE (mandatory):
 
 CHAPTERS: exactly 6 chapters. For each chapter give:
 - "title": a short Hindi chapter title.
-- "narration": 200-300 words of spoken script in simple Hindi.
+- "narration": 280-320 words of spoken script in simple Hindi.
 - "takeaway": one line in Hindi — the single lesson of this chapter.
 - "sfx": one short sound-effect cue (e.g. "soft bell", "calm chime", "silence", "gentle wind").
 

@@ -1,52 +1,66 @@
 """Narration for the Vedantic Psychology autopilot — Hindi book summaries.
 
-Primary: Kokoro TTS (free open-source neural voice, hexgrad/Kokoro-82M),
-Hindi pipeline (lang_code='h'). Runs locally on CPU, no key. Needs
-espeak-ng installed and the ~310 MB model downloaded on first use.
-The voice is fully configurable via the KOKORO_HINDI_VOICE env var.
-NOTE 2026-11-18: the user REJECTED ALL Kokoro Hindi voices — hm_omega,
-hm_psi and hf_alpha all sound robotic to him (hm_omega also had wrong
-pronunciation). Kokoro Hindi stays in the chain only as a fallback
-until/unless he approves one; do NOT present any Kokoro Hindi voice as
-the approved primary. He now wants ONE test video with Edge TTS Hindi
-(hi-IN-MadhurNeural) to judge it. Edge TTS cannot run from this VM
-(proxy blocks speech.platform.bing.com) but works on GitHub Actions —
-the test video is built via a GitHub Actions dry run with
-TTS_ENGINE=edge (see run_one.py TEST_CHAPTERS + daily.yml inputs).
-Fallback 1: Microsoft Edge TTS (natural neural voices, free, no API key),
-Hindi male voice hi-IN-MadhurNeural. Works on GitHub Actions runners.
-Fallback 2: gTTS (Google Translate TTS, free, no key, plain HTTPS),
-lang='hi'. Robotic, last resort only.
+Primary (USER-APPROVED 2026-11-18): Gemini native text-to-speech
+(gemini-3.8-flash-tts, free of charge on the Gemini API free tier with
+the same GEMINI_API_KEY the script generator already uses), voice
+"Charon". The user listened to three Gemini voices (Kore, Charon,
+Aoede) and picked Charon: "ye thik ha". Style: clear, calm, steady
+narration — the style instruction is part of every TTS request so the
+voice sounds the same in every video ("har bar style me").
+Configurable via GEMINI_TTS_VOICE (default Charon) and
+GEMINI_TTS_MODEL (default gemini-3.8-flash-tts; falls back to
+gemini-3.1-flash-tts-preview, then gemini-2.5-flash-preview-tts if the
+model is retired).
+
+REJECTED voices (do NOT use as primary): ALL Kokoro Hindi voices
+(hm_omega, hm_psi, hf_alpha) and Edge hi-IN-MadhurNeural — the user
+said all of them sound robotic. Kokoro has been REMOVED from this
+pipeline entirely (no torch, no espeak-ng needed any more).
+Fallback 1: Microsoft Edge TTS, hi-IN-MadhurNeural (free, no key).
+Fallback 2: gTTS, lang='hi' (robotic, last resort only).
+
+Measured paces (2026-11-18): Gemini Charon ~171 wpm (30 words in
+10.5s); Edge Hindi ~145 wpm (378 words in 156.4s). The script target
+is 1800 words so a full video is 10+ minutes at Gemini pace.
 
 One mp3 per chapter, plus a timings JSON with each chapter's duration
 (measured with ffprobe) so the assembler and the chapter timestamps in
 the description can be computed from real audio lengths.
 """
-import asyncio
+import base64
 import json
 import os
 import re
 import subprocess
+import time
+import urllib.error
+import urllib.request
+import wave
 
-# Configurable voice — swap with env if the user rejects the default.
-DEFAULT_VOICE = os.environ.get("TTS_VOICE", "hi-IN-MadhurNeural")
-# KOKORO_HINDI_VOICE picks the Kokoro Hindi voice. Default hm_psi is a
-# PLACEHOLDER — ALL Kokoro Hindi voices (hm_omega, hm_psi, hf_alpha)
-# were rejected by the user 2026-11-18 (sound robotic). Kokoro Hindi
-# stays only as a fallback; the primary under test is Edge Hindi
-# (TTS_ENGINE=edge). Never present a Kokoro Hindi voice as approved.
-KOKORO_VOICE = (os.environ.get("KOKORO_HINDI_VOICE")
-                or os.environ.get("KOKORO_VOICE", "hm_psi"))
-KOKORO_LANG = os.environ.get("KOKORO_LANG", "h")
+# Configurable voice — the user approved Charon on 2026-11-18.
+GEMINI_VOICE = os.environ.get("GEMINI_TTS_VOICE", "Charon")
+GEMINI_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+GEMINI_MODEL_FALLBACKS = [
+    "gemini-3.8-flash-tts",
+    "gemini-3.1-flash-tts-preview",
+    "gemini-2.5-flash-preview-tts",
+]
+# Style instruction, sent with every request so the voice is clear and
+# sounds the same in every video. Gemini TTS treats a leading style
+# direction as instruction, not as text to read aloud.
+GEMINI_STYLE = os.environ.get(
+    "GEMINI_TTS_STYLE",
+    "Say clearly, calmly and steadily, like a professional narrator:")
+# Edge fallback voice (also rejected as robotic by the user — fallback
+# only, never primary).
+EDGE_VOICE = os.environ.get("TTS_VOICE", "hi-IN-MadhurNeural")
 GTTS_LANG = os.environ.get("TTS_LANG", "hi")
-# TTS_ENGINE=kokoro forces the Kokoro path (used for local testing).
+# TTS_ENGINE forces one path: "gemini"/"gemini-tts" -> [gemini, edge,
+# gtts], "edge"/"edge-tts" -> [edge-tts, gtts], "gtts" -> [gtts].
 FORCE_ENGINE = os.environ.get("TTS_ENGINE", "")
-
-_KOKORO_PIPE = None
-_KOKORO_FAILED = False
-# Kokoro handles short text best; long chapters are split on sentence
-# boundaries into chunks of at most this many characters.
-KOKORO_CHUNK_CHARS = 600
+# Long chapters are split on sentence boundaries into chunks of at most
+# this many characters (one Gemini API call per chunk).
+TTS_CHUNK_CHARS = 600
 
 
 def probe_duration(path):
@@ -61,24 +75,7 @@ def probe_duration(path):
         return 0.0
 
 
-async def _edge_tts_one(text, voice, out_path):
-    import edge_tts
-    comm = edge_tts.Communicate(text, voice)
-    await comm.save(out_path)
-
-
-def edge_tts_scene(text, voice, out_path):
-    asyncio.run(_edge_tts_one(text, voice, out_path))
-    return os.path.exists(out_path) and os.path.getsize(out_path) > 1000
-
-
-def gtts_scene(text, lang, out_path):
-    from gtts import gTTS
-    gTTS(text=text, lang=lang, slow=False).save(out_path)
-    return os.path.exists(out_path) and os.path.getsize(out_path) > 1000
-
-
-def _split_text(text, max_chars=KOKORO_CHUNK_CHARS):
+def _split_text(text, max_chars=TTS_CHUNK_CHARS):
     """Split long text into sentence-boundary chunks (Hindi danda and
     Latin punctuation both count as sentence ends)."""
     sents = [s.strip() for s in
@@ -97,62 +94,123 @@ def _split_text(text, max_chars=KOKORO_CHUNK_CHARS):
     return chunks or [text]
 
 
-def kokoro_scene(text, voice, out_path):
-    """Narrate with Kokoro Hindi (lang_code='h'). The pipeline object is
-    loaded once and reused for all chapters. Long text is split into
-    sentence chunks and the audio concatenated. Returns True on success."""
-    global _KOKORO_PIPE, _KOKORO_FAILED
-    if _KOKORO_FAILED:
-        return False
+def _gemini_tts_call(api_key, model, voice, text):
+    """One Gemini TTS request. Returns raw 16-bit PCM bytes at 24 kHz."""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/%s"
+        ":generateContent?key=%s" % (model, api_key)
+    )
+    body = json.dumps({
+        "contents": [{"parts": [{"text": GEMINI_STYLE + "\n\n" + text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {"voiceName": voice}
+                }
+            },
+        },
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"})
     try:
-        if _KOKORO_PIPE is None:
-            from kokoro import KPipeline
-            _KOKORO_PIPE = KPipeline(lang_code=KOKORO_LANG)
-        import numpy as np
-        import soundfile as sf
-        all_audio = []
-        for chunk in _split_text(text):
-            pieces = []
-            for _, _, audio in _KOKORO_PIPE(chunk, voice=voice):
-                pieces.append(audio)
-            if pieces:
-                all_audio.append(np.concatenate(pieces))
-        if not all_audio:
-            return False
-        tmp_wav = out_path + ".kokoro.wav"
-        sf.write(tmp_wav, np.concatenate(all_audio), 24000)
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-i", tmp_wav,
-             "-codec:a", "libmp3lame", "-q:a", "3", out_path],
-            capture_output=True, text=True)
-        os.remove(tmp_wav)
-        return r.returncode == 0 and os.path.exists(out_path) \
-            and os.path.getsize(out_path) > 1000
-    except Exception as e:
-        print("Kokoro failed (%s)" % e)
-        _KOKORO_FAILED = True
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError("HTTP %d from %s: %s" % (e.code, model, err))
+    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    for part in parts:
+        inline = part.get("inlineData", {})
+        if inline.get("mimeType", "").startswith("audio/"):
+            return base64.b64decode(inline["data"])
+    raise RuntimeError("No audio in response from %s" % model)
+
+
+def gemini_tts_scene(text, voice, out_path):
+    """Narrate with Gemini TTS (Charon). Long text is split into
+    sentence chunks; the PCM is concatenated and converted to mp3 with
+    ffmpeg. Returns True on success."""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        print("Gemini TTS: no GEMINI_API_KEY set.")
         return False
+    models = [GEMINI_MODEL] + [m for m in GEMINI_MODEL_FALLBACKS
+                               if m != GEMINI_MODEL]
+    pcm_all = b""
+    for chunk in _split_text(text):
+        pcm = None
+        last_err = ""
+        for model in models:
+            try:
+                pcm = _gemini_tts_call(api_key, model, voice, chunk)
+                break
+            except Exception as e:
+                last_err = str(e)
+                if "429" in last_err:
+                    print("Gemini TTS rate-limited, waiting 15s...")
+                    time.sleep(15)
+                    try:
+                        pcm = _gemini_tts_call(api_key, model, voice, chunk)
+                        break
+                    except Exception as e2:
+                        last_err = str(e2)
+        if pcm is None:
+            print("Gemini TTS failed for a chunk: %s" % last_err)
+            return False
+        pcm_all += pcm
+    if not pcm_all:
+        return False
+    tmp_wav = out_path + ".gemini.wav"
+    with wave.open(tmp_wav, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(pcm_all)
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", tmp_wav,
+         "-codec:a", "libmp3lame", "-q:a", "3", out_path],
+        capture_output=True, text=True)
+    os.remove(tmp_wav)
+    return r.returncode == 0 and os.path.exists(out_path) \
+        and os.path.getsize(out_path) > 1000
+
+
+async def _edge_tts_one(text, voice, out_path):
+    import edge_tts
+    comm = edge_tts.Communicate(text, voice)
+    await comm.save(out_path)
+
+
+def edge_tts_scene(text, voice, out_path):
+    import asyncio
+    asyncio.run(_edge_tts_one(text, voice, out_path))
+    return os.path.exists(out_path) and os.path.getsize(out_path) > 1000
+
+
+def gtts_scene(text, lang, out_path):
+    from gtts import gTTS
+    gTTS(text=text, lang=lang, slow=False).save(out_path)
+    return os.path.exists(out_path) and os.path.getsize(out_path) > 1000
 
 
 def synth_chapter(text, voice, out_path, index):
-    """Narrate one chapter. Order: Kokoro Hindi first, Edge TTS
-    fallback, gTTS last resort. TTS_ENGINE forces one path:
-    "kokoro" -> [kokoro, gtts], "edge"/"edge-tts" -> [edge-tts, gtts]
-    (the Edge test video uses TTS_ENGINE=edge), "gtts" -> [gtts].
+    """Narrate one chapter. Order: Gemini TTS (Charon) first, Edge TTS
+    fallback, gTTS last resort. TTS_ENGINE forces one path (see above).
     Returns (ok, engine)."""
-    order = ["kokoro", "edge-tts", "gtts"]
-    if FORCE_ENGINE == "kokoro":
-        order = ["kokoro", "gtts"]
+    order = ["gemini-tts", "edge-tts", "gtts"]
+    if FORCE_ENGINE in ("gemini", "gemini-tts"):
+        order = ["gemini-tts", "edge-tts", "gtts"]
     elif FORCE_ENGINE in ("edge", "edge-tts"):
         order = ["edge-tts", "gtts"]
     elif FORCE_ENGINE == "gtts":
         order = ["gtts"]
     for engine in order:
         try:
-            if engine == "edge-tts":
+            if engine == "gemini-tts":
+                ok = gemini_tts_scene(text, GEMINI_VOICE, out_path)
+            elif engine == "edge-tts":
                 ok = edge_tts_scene(text, voice, out_path)
-            elif engine == "kokoro":
-                ok = kokoro_scene(text, KOKORO_VOICE, out_path)
             else:
                 ok = gtts_scene(text, GTTS_LANG, out_path)
             if ok:
@@ -165,7 +223,7 @@ def synth_chapter(text, voice, out_path, index):
     return False, "none"
 
 
-def narrate_chapters(chapters, out_dir, voice=DEFAULT_VOICE):
+def narrate_chapters(chapters, out_dir, voice=EDGE_VOICE):
     """Narrate every chapter. Returns list of {audio, duration, engine,
     title} and writes timings.json in out_dir."""
     os.makedirs(out_dir, exist_ok=True)
@@ -191,7 +249,7 @@ def narrate_chapters(chapters, out_dir, voice=DEFAULT_VOICE):
 
 
 # Backwards-compatible alias (same shape as the live pipeline's scenes).
-def narrate_scenes(scenes, out_dir, voice=DEFAULT_VOICE):
+def narrate_scenes(scenes, out_dir, voice=EDGE_VOICE):
     return narrate_chapters(scenes, out_dir, voice)
 
 
@@ -200,6 +258,6 @@ if __name__ == "__main__":
     text = sys.argv[1] if len(sys.argv) > 1 else (
         "सोचो और अमीर बनो। यह किताब बताती है कि सफलता किस्मत से नहीं, "
         "सोच से बनती है। छोटी-छोटी आदतें रोज़ दोहराने से बड़ा बदलाव आता है।")
-    ok, engine = synth_chapter(text, DEFAULT_VOICE, "/tmp/tts_smoke_hi.mp3", 0)
+    ok, engine = synth_chapter(text, EDGE_VOICE, "/tmp/tts_smoke_hi.mp3", 0)
     print("ok=%s engine=%s duration=%.1fs"
           % (ok, engine, probe_duration("/tmp/tts_smoke_hi.mp3")))

@@ -12,54 +12,49 @@ What If autopilot (`~/workspace/youtube-autopilot/`), adapted for Hindi.
 |---|---|---|
 | Language | English | Hindi (Devanagari script) |
 | Content | What If questions, 13 scenes | Book summaries, 6 chapters |
-| Length | 4–5 min | 10+ min (1500–1800 words) |
+| Length | 4–5 min | 10+ min (1800 words) |
 | Images | ~52 photos/video (Openverse) | **2 AI images/video** (Pollinations): book visual + thumbnail visual |
 | Motion | Ken Burns + clips | Static book visual + chapter-title overlay |
-| Voice | Kokoro am_adam (English) | Kokoro Hindi (configurable, see below) |
+| Voice | Kokoro am_adam (English) | **Gemini TTS "Charon" (approved)** — see below |
 | Topics | trends + 102-topic pool | 50-book rotation from `books.json` |
 | Description | Short + tags | Full SEO + takeaways + chapters with timestamps + hashtags |
 | Secrets | `YT_*` | `YT2_*` (separate channel) |
 | Videos/day | 6 | `VIDEOS_PER_DAY` env (default 3) |
 
-## Voice — IMPORTANT (2026-11-18)
+## Voice — FINAL (2026-11-18)
 
-The user **rejected ALL Kokoro Hindi voices** — `hm_omega`, `hm_psi`
-and `hf_alpha` all sound robotic to him (`hm_omega` also had wrong
-Hindi pronunciation). Kokoro Hindi stays in the chain only as a
-fallback; never present any Kokoro Hindi voice as the approved primary.
+**APPROVED: Gemini native TTS, voice "Charon".** The user listened to
+three Gemini voices (Kore, Charon, Aoede) and picked Charon: "ye thik
+ha". It is the primary voice in `tts.py`, with a style instruction on
+every request — clear, calm, steady narration — so the voice sounds
+the same in every video ("har bar style me"). Configurable via
+`GEMINI_TTS_VOICE` (default Charon) and `GEMINI_TTS_MODEL` (default
+`gemini-3.8-flash-tts`, free of charge on the Gemini API free tier with
+the same `GEMINI_API_KEY` the script generator uses). Fallback chain:
+Gemini TTS → Edge `hi-IN-MadhurNeural` → gTTS `hi`.
 
-**Current plan: ONE test video with Edge TTS Hindi
-(`hi-IN-MadhurNeural`)** so he can judge it. Edge TTS cannot run from
-this VM (proxy blocks `speech.platform.bing.com`) but works on GitHub
-Actions runners. Build it with a manual workflow dispatch:
+**REJECTED (never as primary):** ALL Kokoro Hindi voices (`hm_omega`,
+`hm_psi`, `hf_alpha`) and Edge `hi-IN-MadhurNeural` — the user said
+all of them sound robotic. Kokoro has been REMOVED from this pipeline
+(no torch, no espeak-ng, no `kokoro`/`soundfile` in requirements).
 
-- `tts_engine` = `edge`
-- `test_chapters` = `1` (builds only the first chapter, ~2 min — a
-  quick voice test without a full 10-minute render)
-
-or locally-equivalent env vars: `TTS_ENGINE=edge TEST_CHAPTERS=1`.
-
-The Hindi voice is fully configurable via the `KOKORO_HINDI_VOICE`
-env var / GitHub secret (default `hm_psi`, a placeholder). Fallback
-chain: Kokoro Hindi → Edge `hi-IN-MadhurNeural` → gTTS `hi`.
-
-**Measured pace (local test, Kokoro hm_psi): ~211 words/min** — 162
-words took 46.1s. At that pace 1500 words ≈ 7 min, NOT 10 min. The
-1500-word gate in `script_gen.py` is therefore likely too low; measure
-the Edge pace from the test video and raise `MIN_WORDS` / the prompt
-target (towards ~2100 words) if Edge is equally fast. The targets are
-constants at the top of `script_gen.py` for exactly this adjustment.
+**Measured paces:** Gemini Charon ~171 wpm (30 words in 10.5s);
+Edge Hindi ~145 wpm (378 words in 156.4s). The script target is 1800
+words (6 chapters × 280–320), so a full video is ~10.5 min at Gemini
+pace. The first Edge test video (Atomic Habits ch. 1, 378 words,
+156.4s) is the evidence for the Edge pace.
 
 ## Files
 
 - `books.json` — 50 books (English title, author, Hindi title, Hindi hook).
 - `script_gen.py` — Gemini `gemini-3.5-flash-lite` writes a Hindi script:
-  super hook + 6 chapters (200–300 words each), takeaway per chapter,
+  super hook + 6 chapters (280–320 words each), takeaway per chapter,
   title, SEO description draft, tags, thumbnail text, 2 AI image
   prompts. Word gate: ≥1500 to pass, keeps the longest ≥1200 after
-  4 attempts.
-- `tts.py` — Kokoro Hindi (`lang_code='h'`) primary, Edge Hindi fallback,
-  gTTS `hi` last resort. One mp3 per chapter + `timings.json`.
+  4 attempts. Target 1800 words ≈ 10.5 min at Gemini Charon pace.
+- `tts.py` — Gemini TTS "Charon" primary (clear/calm/steady style on
+  every request), Edge Hindi fallback, gTTS `hi` last resort. One mp3
+  per chapter + `timings.json`.
 - `images.py` — 2 images/video via Pollinations (FLUX, free, no key;
   bottom-7% watermark crop), Openverse fallback, never-fail reuse.
 - `captions.py` — burned-in Hindi captions from the script (.srt, word-
@@ -81,12 +76,14 @@ constants at the top of `script_gen.py` for exactly this adjustment.
 ## Secrets needed (GitHub repo secrets)
 
 - `GEMINI_API_KEY` — same free Gemini key as the live pipeline.
+  Also powers the Gemini TTS voice (no separate key needed).
 - `YT2_CLIENT_ID`, `YT2_CLIENT_SECRET`, `YT2_REFRESH_TOKEN` — OAuth for
   the **Vedantic Psychology** channel (separate token: Playground auth
   selecting the Vedantic Psychology brand account; verify with a
   Playground "Refresh access token" 200 before storing, like the live
   pipeline). OAuth app must be in Production.
-- `KOKORO_HINDI_VOICE` (optional) — the user's picked Kokoro Hindi voice.
+- `GEMINI_TTS_VOICE` (optional) — the user's picked Gemini voice
+  (default Charon, approved 2026-11-18).
 
 ## Quota warning
 
@@ -99,21 +96,20 @@ together may only upload **6 videos/day total** (9900/10000 units).
 
 ```bash
 cd ~/workspace/youtube-autopilot-vedantic
-# venv with the project deps (the live pipeline's .venv has them):
 ~/workspace/youtube-autopilot/.venv/bin/python -m py_compile *.py
-# TTS smoke test (Kokoro Hindi, uses .venv-kokoro):
-~/workspace/youtube-autopilot/.venv-kokoro/bin/python tts.py "सोचो और अमीर बनो।"
+# TTS smoke test needs GEMINI_API_KEY (Gemini TTS runs on the API):
+GEMINI_API_KEY=... ~/workspace/youtube-autopilot/.venv/bin/python tts.py "सोचो और अमीर बनो।"
 # Full dry run with a fixture script (no Gemini key needed):
 #   test_work/test_dryrun.py — builds a short video end to end with
-#   DRY_RUN=1 and TEST_CHAPTERS=1 (the Edge voice-test mode).
+#   DRY_RUN=1 and TEST_CHAPTERS=1.
 # Real run (needs GEMINI_API_KEY + YT2_*):
-GEMINI_API_KEY=... DRY_RUN=1 ~/workspace/youtube-autopilot/.venv-kokoro/bin/python run_one.py 0
-# Edge Hindi voice test (GitHub Actions only — Edge is proxy-blocked here):
-#   workflow_dispatch with tts_engine=edge, test_chapters=1.
-# Locally, TTS_ENGINE=edge proves the forcing path (Edge fails on the
-# proxy, gTTS catches it); on the runner Edge succeeds.
+GEMINI_API_KEY=... DRY_RUN=1 ~/workspace/youtube-autopilot/.venv/bin/python run_one.py 0
+# Full test video with the approved Charon voice (GitHub Actions):
+#   workflow_dispatch with tts_engine=gemini (or empty for the default
+#   chain), test_chapters empty (full 6-chapter video), dry_run true.
 ```
 
-Note: the full pipeline needs `ffmpeg`, `espeak-ng` and the
-`fonts-noto-core` package (Devanagari font for captions/thumbnails);
-all three are installed on this VM and in the workflow.
+Note: the full pipeline needs `ffmpeg` and the `fonts-noto-core`
+package (Devanagari font for captions/thumbnails); both are installed
+on this VM and in the workflow. No torch, no espeak-ng any more —
+Kokoro was removed when the user rejected all its Hindi voices.
